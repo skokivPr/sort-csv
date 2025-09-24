@@ -8,13 +8,76 @@ let appState = {
     currentChart: null,
     currentModalData: null,
     currentView: "dashboard", // 'dashboard' or 'categorized'
-    selectedBuffer1: "",
-    selectedBuffer2: "",
     chartType: "pie", // 'pie' or 'bar'
     navControlsVisible: localStorage.getItem("navControlsVisible") !== "false", // Default to visible
     csvEditor: null, // CodeMirror instance
     inputViewMode: "editor", // 'editor' or 'table'
+    driversEnabled: localStorage.getItem("driversEnabled") === "true", // Driver columns activation
 };
+
+// Driver columns management
+function toggleDriverColumns(enable) {
+    appState.driversEnabled = enable;
+    localStorage.setItem("driversEnabled", enable.toString());
+
+    // Update body class to control CSS visibility
+    document.body.classList.toggle("drivers-enabled", enable);
+    document.body.classList.toggle("drivers-disabled", !enable);
+
+    // Update modal if it exists
+    const modal = document.getElementById("modal");
+    if (modal) {
+        modal.classList.toggle("drivers-enabled", enable);
+        modal.classList.toggle("drivers-disabled", !enable);
+    }
+
+    // Update CSV editor header if it exists
+    if (appState.csvEditor && appState.inputViewMode === "editor") {
+        updateCSVEditorHeader(enable);
+    }
+
+    // Re-populate table to ensure proper rendering
+    if (typeof populateInputTable === 'function') {
+        populateInputTable();
+    }
+
+    return enable;
+}
+
+// Update CSV editor header based on driver columns state
+function updateCSVEditorHeader(driversEnabled) {
+    if (!appState.csvEditor) return;
+
+    const currentValue = appState.csvEditor.getValue();
+    const lines = currentValue.split('\n');
+
+    if (lines.length > 0) {
+        let headerLine = lines[0];
+        const hasDriverColumns = headerLine.includes('driverName') || headerLine.includes('Driver Name');
+
+        if (driversEnabled && !hasDriverColumns) {
+            // Add driver columns to header
+            if (headerLine.endsWith(',')) {
+                headerLine += 'driverName,driverLicense';
+            } else if (headerLine.trim()) {
+                headerLine += ',driverName,driverLicense';
+            } else {
+                headerLine = 'timestamp,user,vrid,scac,traktor,trailer,driverName,driverLicense';
+            }
+
+            lines[0] = headerLine;
+            appState.csvEditor.setValue(lines.join('\n'));
+        } else if (!driversEnabled && hasDriverColumns) {
+            // Remove driver columns from header
+            headerLine = headerLine.replace(/,?driverName,?driverLicense,?/g, '');
+            headerLine = headerLine.replace(/,Driver Name,?Driver License,?/g, '');
+            headerLine = headerLine.replace(/,$/, ''); // Remove trailing comma
+
+            lines[0] = headerLine;
+            appState.csvEditor.setValue(lines.join('\n'));
+        }
+    }
+}
 
 // Utility functions
 function generateId() {
@@ -98,7 +161,13 @@ function categorizeData(data) {
 
 // CSV Download functionality
 function downloadCSV(data, filename) {
-    const headers = ["timestamp", "user", "vrid", "scac", "traktor", "trailer"];
+    let headers = ["timestamp", "user", "vrid", "scac", "traktor", "trailer"];
+
+    // Add driver columns only if enabled
+    if (appState.driversEnabled) {
+        headers.push("driverName", "driverLicense");
+    }
+
     const csvContent = [
         headers.join(","),
         ...data.map((row) => headers.map((header) => row[header] || "").join(",")),
@@ -295,6 +364,31 @@ function getUserActivityData(data) {
         .map(([user, count]) => ({ user, count }));
 }
 
+// Counter animation function
+function animateCounter(element, targetValue, duration = 3000) {
+    const startValue = 0;
+    const startTime = performance.now();
+
+    function updateCounter(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        // Easing function for smooth animation
+        const easeOutCubic = 1 - Math.pow(1 - progress, 1);
+        const currentValue = Math.floor(startValue + (targetValue - startValue) * easeOutCubic);
+
+        element.textContent = currentValue;
+
+        if (progress < 1) {
+            requestAnimationFrame(updateCounter);
+        } else {
+            element.textContent = targetValue; // Ensure final value is exact
+        }
+    }
+
+    requestAnimationFrame(updateCounter);
+}
+
 // UI Updates
 function updateCategoriesTiles() {
     const panel = document.getElementById("categories-panel");
@@ -313,62 +407,74 @@ function updateCategoriesTiles() {
                         </div>
                         <h3 class="tile-main-title">IB</h3>
                         <p class="tile-subtitle">Inbound</p>
+                        <p class="tile-description">Rekordy z VRID 0994 - wizyty wjeżdżające na teren terminala</p>
                     </div>
                     <div class="category-tile-bottom">
                         <span class="tile-details-link tile-details-link-orange"><i class="fas fa-eye"></i> View Details</span>
-                        <span class="tile-count tile-count-orange">${ib.length
-        }</span>
+                        <span class="tile-count tile-count-orange" data-target="${ib.length}">0</span>
                     </div>
                 </div>
                 <div class="category-tile" onclick="showModal('OB (Other VRID)', ${JSON.stringify(
-            ob
-        ).replace(/"/g, "&quot;")})">
+        ob
+    ).replace(/"/g, "&quot;")})">
                     <div>
                         <div class="tile-icon-wrapper tile-icon-wrapper-green">
                             <i class="fas fa-arrow-right"></i>
                         </div>
                         <h3 class="tile-main-title">OB</h3>
                         <p class="tile-subtitle">Outbound</p>
+                        <p class="tile-description">Rekordy z innymi VRID - wizyty wyjeżdżające z terminala</p>
                     </div>
                     <div class="category-tile-bottom">
                         <span class="tile-details-link tile-details-link-green"><i class="fas fa-eye"></i> View Details</span>
-                        <span class="tile-count tile-count-green">${ob.length
-        }</span>
+                        <span class="tile-count tile-count-green" data-target="${ob.length}">0</span>
                     </div>
                 </div>
                 <div class="category-tile" onclick="showModal('ATSEU (VS/VI-ES)', ${JSON.stringify(
-            atseu
-        ).replace(/"/g, "&quot;")})">
+        atseu
+    ).replace(/"/g, "&quot;")})">
                     <div>
                         <div class="tile-icon-wrapper tile-icon-wrapper-blue">
                             <i class="fas fa-truck"></i>
                         </div>
                         <h3 class="tile-main-title">VS/<span style="color: red;">VI-ES</span> (ATS)</h3>
                         <p class="tile-subtitle">Prime Trailer (VS/VI-ES)</p>
+                        <p class="tile-description">Rekordy z trailerami VS i VI-ES - główne naczepy w systemie ATS</p>
                     </div>
                     <div class="category-tile-bottom">
                         <span class="tile-details-link tile-details-link-blue"><i class="fas fa-eye"></i> View Details</span>
-                        <span class="tile-count tile-count-blue">${atseu.length
-        }</span>
+                        <span class="tile-count tile-count-blue" data-target="${atseu.length}">0</span>
                     </div>
                 </div>
                 <div class="category-tile" onclick="showModal('OTHER (No VRID)', ${JSON.stringify(
-            other
-        ).replace(/"/g, "&quot;")})">
+        other
+    ).replace(/"/g, "&quot;")})">
                     <div>
                         <div class="tile-icon-wrapper tile-icon-wrapper-red">
                             <i class="fas fa-box"></i>
                         </div>
                         <h3 class="tile-main-title">Other</h3>
                         <p class="tile-subtitle">For all no vrid</p>
+                        <p class="tile-description">Rekordy bez przypisanego VRID - wymagają dodatkowej weryfikacji</p>
                     </div>
                     <div class="category-tile-bottom">
                         <span class="tile-details-link tile-details-link-red"><i class="fas fa-eye"></i> View Details</span>
-                        <span class="tile-count tile-count-red">${other.length
-        }</span>
+                        <span class="tile-count tile-count-red" data-target="${other.length}">0</span>
                     </div>
                 </div>
             `;
+
+    // Animate counters after DOM is updated
+    setTimeout(() => {
+        const counters = panel.querySelectorAll('.tile-count');
+        counters.forEach((counter, index) => {
+            const targetValue = parseInt(counter.dataset.target);
+            // Stagger animations slightly for visual effect
+            setTimeout(() => {
+                animateCounter(counter, targetValue, 3800);
+            }, index * 100);
+        });
+    }, 50);
 }
 
 function updateBuffersTable() {
@@ -400,24 +506,10 @@ function updateBuffersTable() {
             .join("");
     }
 
-    // Update buffer select options
-    updateBufferSelects();
+    // Update buffer statistics
+    updateBufferStats();
 }
 
-function updateBufferSelects() {
-    const buffers = getBuffers();
-    const buffer1Select = document.getElementById("buffer1-select");
-    const buffer2Select = document.getElementById("buffer2-select");
-
-    const options = buffers
-        .map((b) => `<option value="${b.id}">${b.name}</option>`)
-        .join("");
-
-    buffer1Select.innerHTML =
-        '<option value="">Select buffer 1...</option>' + options;
-    buffer2Select.innerHTML =
-        '<option value="">Select buffer 2...</option>' + options;
-}
 
 function updateChart() {
     const ctx = document.getElementById("main-chart").getContext("2d");
@@ -479,6 +571,7 @@ function updatePieChart(ctx) {
                         font: {
                             family: "JetBrains Mono",
                         },
+                        whiteSpace: "nowrap",
                     },
                 },
                 title: {
@@ -533,6 +626,7 @@ function updateBarChart(ctx) {
                             family: "JetBrains Mono",
                             size: 14,
                             weight: "bold",
+                            whiteSpace: "nowrap",
                         },
                     },
                 },
@@ -608,6 +702,7 @@ function updateBarChart(ctx) {
                         color: "#8b8b8b",
                         font: {
                             family: "JetBrains Mono",
+                            whiteSpace: "nowrap",
                         },
                     },
                     grid: {
@@ -671,18 +766,24 @@ function handleDataParsed(text) {
     updateChart();
 
     const saveBtn = document.getElementById("save-btn");
-    saveBtn.disabled = appState.allData.length === 0;
+    if (saveBtn) saveBtn.disabled = appState.allData.length === 0;
 }
 
 function saveToBuffer() {
     if (appState.allData.length === 0) {
         showToast("No data to save!", "error");
+        if (typeof sendErrorNotification === 'function') {
+            sendErrorNotification("Attempted to save empty data to buffer");
+        }
         return;
     }
     const timestamp = new Date().toLocaleString("en-US", { hour12: false });
     const bufferName = `CSV Data ${timestamp}`;
     createBuffer(bufferName, appState.allData, appState.categorizedData);
     showToast(`Saved to buffer: ${bufferName}`, "success");
+    if (typeof sendSuccessNotification === 'function') {
+        sendSuccessNotification(`Buffer created: ${bufferName} (${appState.allData.length} records)`);
+    }
     updateBuffersTable();
 }
 
@@ -695,23 +796,6 @@ function exportBuffer(id) {
     }
 }
 
-function performComparison() {
-    const buffer1Id = document.getElementById("buffer1-select").value;
-    const buffer2Id = document.getElementById("buffer2-select").value;
-
-    if (!buffer1Id || !buffer2Id) {
-        showToast("Select two buffers to compare", "error");
-        return;
-    }
-
-    const result = compareBuffers(buffer1Id, buffer2Id);
-    if (result) {
-        showComparisonResults(result);
-        showToast("Comparison complete", "success");
-    } else {
-        showToast("Error during comparison", "error");
-    }
-}
 
 function showComparisonResults(result) {
     const panel = document.getElementById("categories-panel");
@@ -778,10 +862,10 @@ function renderInputPanel() {
                             <p>Supports .csv and .txt files with comma, semicolon, or tab separators.</p>
                             <input type="file" id="file-input" accept=".csv,.txt" class="file-input-hidden">
                             <div style="display: flex; gap: 0.5rem; align-items: center;">
-                                <button class="primary file-input-btn-full" onclick="document.getElementById('file-input').click()" style="flex: 1;">
+                                <button class=" f-input" onclick="document.getElementById('file-input').click()">
                                     Select File
                                 </button>
-                                <button class="small-btn" onclick="copyEditorDataToClipboard()" title="Copy CSV to clipboard">
+                                <button class="editor-btn" onclick="copyEditorDataToClipboard()" title="Copy CSV to clipboard">
                                     <i class="fas fa-copy"></i>
                                 </button>
                                 <button class="editor-btn" onclick="toggleInputViewMode()" title="Switch to Table view">
@@ -790,7 +874,7 @@ function renderInputPanel() {
                             </div>
                         </div>
             <div class="panel-content-flex-grow">
-                <div id="csv-editor" style="height: 100%; border: 1px solid var(--border-color);"></div>
+                <div id="csv-editor" style="height: 100%; "></div>
             </div>
         `;
 
@@ -806,10 +890,10 @@ function renderInputPanel() {
                 <p>Supports .csv and .txt files with comma, semicolon, or tab separators.</p>
                 <input type="file" id="file-input" accept=".csv,.txt" class="file-input-hidden">
                             <div style="display: flex; gap: 0.5rem; align-items: center;">
-                                <button class="primary file-input-btn-full" onclick="document.getElementById('file-input').click()" style="flex: 1;">
+                                <button class=" f-input" onclick="document.getElementById('file-input').click()">
                                     Select File
                                 </button>
-                                <button class="small-btn" onclick="copyEditorDataToClipboard()" title="Copy CSV to clipboard">
+                                <button class="editor-btn" onclick="copyEditorDataToClipboard()" title="Copy CSV to clipboard">
                                     <i class="fas fa-copy"></i>
                                 </button>
                                 <button class="editor-btn" onclick="toggleInputViewMode()" title="Switch to Editor view">
@@ -838,6 +922,8 @@ function renderInputPanel() {
                                     <th style="position: sticky; top: 0; z-index: 9;">SCAC</th>
                                     <th style="position: sticky; top: 0; z-index: 9;">Traktor</th>
                                     <th style="position: sticky; top: 0; z-index: 9;">Trailer</th>
+                                    <th style="position: sticky; top: 0; z-index: 9;" class="driver-column">Driver Name</th>
+                                    <th style="position: sticky; top: 0; z-index: 9;" class="driver-column">Driver License</th>
                                     <th style="position: sticky; top: 0; z-index: 9;">Actions</th>
                                 </tr>
                             </thead>
@@ -863,12 +949,14 @@ function populateInputTable() {
 
     tbody.innerHTML = appState.allData.map((row, index) => `
         <tr data-row-index="${index}">
-            <td><input type="text" class="editable-cell" value="${row.timestamp || ''}" onchange="updateRowData(${index}, 'timestamp', this.value)"></td>
-            <td><input type="text" class="editable-cell" value="${row.user || ''}" onchange="updateRowData(${index}, 'user', this.value)"></td>
-            <td><input type="text" class="editable-cell vrid-input" value="${row.vrid || ''}" onchange="updateRowData(${index}, 'vrid', this.value)"></td>
-            <td><input type="text" class="editable-cell" value="${row.scac || ''}" onchange="updateRowData(${index}, 'scac', this.value)"></td>
-            <td><input type="text" class="editable-cell" value="${row.traktor || ''}" onchange="updateRowData(${index}, 'traktor', this.value)"></td>
-            <td><input type="text" class="editable-cell trailer-input" value="${row.trailer || ''}" onchange="updateRowData(${index}, 'trailer', this.value)"></td>
+            <td><input type="text" class="editable-cell" value="${row.timestamp || ''}" onchange="updateRowData(${index}, 'timestamp', this.value)" onfocus="this.select()"></td>
+            <td><input type="text" class="editable-cell" value="${row.user || ''}" onchange="updateRowData(${index}, 'user', this.value)" onfocus="this.select()"></td>
+            <td><input type="text" class="editable-cell vrid-input" value="${row.vrid || ''}" onchange="updateRowData(${index}, 'vrid', this.value)" onfocus="this.select()"></td>
+            <td><input type="text" class="editable-cell" value="${row.scac || ''}" onchange="updateRowData(${index}, 'scac', this.value)" onfocus="this.select()"></td>
+            <td><input type="text" class="editable-cell" value="${row.traktor || ''}" onchange="updateRowData(${index}, 'traktor', this.value)" onfocus="this.select()"></td>
+            <td><input type="text" class="editable-cell trailer-input" value="${row.trailer || ''}" onchange="updateRowData(${index}, 'trailer', this.value)" onfocus="this.select()"></td>
+            <td class="driver-column"><input type="text" class="editable-cell driver-name-input" value="${row.driverName || ''}" onchange="updateRowData(${index}, 'driverName', this.value)" onfocus="this.select()" placeholder="Select driver..."></td>
+            <td class="driver-column"><input type="text" class="editable-cell driver-license-input" value="${row.driverLicense || ''}" onchange="updateRowData(${index}, 'driverLicense', this.value)" onfocus="this.select()" readonly title="License is auto-filled when driver is selected"></td>
             <td>
                 <div class="row-actions">
                     <button class="row-action-btn duplicate" onclick="duplicateRow(${index})" title="Duplicate row">
@@ -893,6 +981,21 @@ function updateRowData(index, field, value) {
     if (appState.allData[index]) {
         appState.allData[index][field] = value;
 
+        // Auto-fill driver license when driver name is selected
+        if (field === 'driverName' && value) {
+            const drivers = csvTerminal.getDrivers();
+            const selectedDriver = drivers.find(d => d.name.toLowerCase() === value.toLowerCase());
+            if (selectedDriver) {
+                appState.allData[index]['driverLicense'] = selectedDriver.license;
+                // Update the UI immediately
+                const licenseInput = document.querySelector(`tr[data-row-index="${index}"] .driver-license-input`);
+                if (licenseInput) {
+                    licenseInput.value = selectedDriver.license;
+                }
+                showToast(`Auto-filled license: ${selectedDriver.license}`, "info");
+            }
+        }
+
         // Update raw data
         updateRawDataFromTable();
 
@@ -913,7 +1016,9 @@ function addNewRow() {
         vrid: "",
         scac: "",
         traktor: "",
-        trailer: ""
+        trailer: "",
+        driverName: "",
+        driverLicense: ""
     };
 
     appState.allData.push(newRow);
@@ -938,7 +1043,9 @@ function duplicateRow(index) {
             vrid: originalRow.vrid,
             scac: originalRow.scac,
             traktor: originalRow.traktor,
-            trailer: originalRow.trailer
+            trailer: originalRow.trailer,
+            driverName: originalRow.driverName,
+            driverLicense: originalRow.driverLicense
         };
 
         appState.allData.splice(index + 1, 0, duplicatedRow);
@@ -1008,10 +1115,20 @@ function setupEventListeners() {
                     appState.csvEditor.setValue(content);
                 }
                 handleDataParsed(content);
+
+                // Update clear button state after loading file
+                updateClearButtonState();
+
                 showToast(`Loaded file: ${file.name}`, "success");
+                if (typeof sendSuccessNotification === 'function') {
+                    sendSuccessNotification(`File loaded: ${file.name} (${content.split('\n').length} lines)`);
+                }
             };
             reader.onerror = function () {
                 showToast(`Error loading file: ${reader.error?.message}`, "error");
+                if (typeof sendErrorNotification === 'function') {
+                    sendErrorNotification(`Failed to load file: ${file.name} - ${reader.error?.message}`);
+                }
             };
             reader.readAsText(file);
 
@@ -1020,28 +1137,59 @@ function setupEventListeners() {
         });
     }
 
-    // Compare button handler
-    const compareBtn = document.getElementById("compare-btn");
-    if (compareBtn) {
-        compareBtn.addEventListener("click", performComparison);
+    // Control action buttons
+    const saveBtn = document.getElementById("save-btn");
+    if (saveBtn) {
+        saveBtn.addEventListener("click", saveToBuffer);
     }
 
-    // Buffer select handlers
-    const buffer1Select = document.getElementById("buffer1-select");
-    const buffer2Select = document.getElementById("buffer2-select");
-    if (buffer1Select)
-        buffer1Select.addEventListener("change", updateCompareButton);
-    if (buffer2Select)
-        buffer2Select.addEventListener("change", updateCompareButton);
-
-    function updateCompareButton() {
-        const buffer1 = document.getElementById("buffer1-select")?.value;
-        const buffer2 = document.getElementById("buffer2-select")?.value;
-        const compareBtn = document.getElementById("compare-btn");
-        if (compareBtn) {
-            compareBtn.disabled = !buffer1 || !buffer2;
-        }
+    const clearBtn = document.getElementById("clear-btn");
+    if (clearBtn) {
+        clearBtn.addEventListener("click", clearAll);
     }
+
+    const themeBtn = document.getElementById("theme-btn");
+    if (themeBtn) {
+        themeBtn.addEventListener("click", toggleTheme);
+    }
+
+    const controlThemeBtn = document.getElementById("control-theme-btn");
+    if (controlThemeBtn) {
+        controlThemeBtn.addEventListener("click", toggleTheme);
+    }
+
+    const viewBtn = document.getElementById("view-btn");
+    if (viewBtn) {
+        viewBtn.addEventListener("click", toggleView);
+    }
+
+    const controlViewBtn = document.getElementById("control-view-btn");
+    if (controlViewBtn) {
+        controlViewBtn.addEventListener("click", toggleView);
+    }
+
+    // Control panel reset button (different from nav-controls reset button)
+    const controlResetBtn = document.getElementById("control-reset-btn");
+    if (controlResetBtn) {
+        controlResetBtn.addEventListener("click", function () {
+            // Add spin animation to control reset button
+            controlResetBtn.classList.add("spin");
+            setTimeout(() => {
+                controlResetBtn.classList.remove("spin");
+            }, 800);
+
+            // Reset layout
+            const grid = document.getElementById("grid-container");
+            grid.style.gridTemplateColumns = "1fr 8px 1fr";
+            grid.style.gridTemplateRows = "1fr 8px 1fr";
+
+            // Update reset button states after reset
+            updateResetButtonStates();
+
+            showToast("Layout reset to default", "info");
+        });
+    }
+
 }
 
 // View switching functionality
@@ -1062,10 +1210,18 @@ function toggleView() {
     renderCurrentView();
 
     const viewBtn = document.getElementById("view-btn");
-    viewBtn.innerHTML =
-        appState.currentView === "dashboard"
-            ? '<i class="fas fa-th-large"></i><br>Categories'
-            : '<i class="fas fa-tachometer-alt"></i><br>Dashboard';
+    const controlViewBtn = document.getElementById("control-view-btn");
+
+    const navContent = appState.currentView === "dashboard"
+        ? '<i class="fas fa-th-large"></i>'
+        : '<i class="fas fa-tachometer-alt"></i>';
+
+    const controlContent = appState.currentView === "dashboard"
+        ? '<i class="fas fa-th-large"></i><span>Categories</span>'
+        : '<i class="fas fa-tachometer-alt"></i><span>Dashboard</span>';
+
+    if (viewBtn) viewBtn.innerHTML = navContent;
+    if (controlViewBtn) controlViewBtn.innerHTML = controlContent;
 }
 
 function renderCurrentView() {
@@ -1107,44 +1263,131 @@ function renderDashboardView() {
                     </div>
                 </div>
 
-                <!-- Buffers Panel -->
+                <!-- Buffers & Management Panel -->
                 <div class="panel panel-grid-1-3">
-                    <div class="panel-header">DATA BUFFERS & COMPARISON</div>
-                    <div class="panel-content panel-content-flex-col">
-                        <div class="panel-content-buffer-controls">
-                            <select id="buffer1-select">
-                                <option value="">Select buffer 1...</option>
-                            </select>
-                            <select id="buffer2-select">
-                                <option value="">Select buffer 2...</option>
-                            </select>
-                            <button id="compare-btn" class="primary" disabled>Compare</button>
-                        </div>
-                        <div class="table-container">
-                            <table id="buffers-table">
-                                <thead>
-                                    <tr>
-                                        <th onclick="sortBuffers('name')">Name</th>
-                                        <th onclick="sortBuffers('recordCount')">Records</th>
-                                        <th>Size</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="buffers-tbody">
-                                    <tr>
-                                        <td colspan="4" class="table-empty-message">No buffers saved.</td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                    <div class="panel-header">DATA BUFFERS // MANAGEMENT</div>
+                    <div class="panel-content">
+                        <div id="buffers-content">
+                            <!-- Control Panel -->
+                            <div class="buffer-control-panel">
+                                <div class="control-panel-header">
+                                    <h4><i class="fas fa-cogs"></i> Control Panel</h4>
+                                </div>
+                                <div class="control-panel-content">
+                                    <!-- Quick Actions -->
+                                    <div class="control-actions">
+            <button class="control-btn save-btn" id="save-btn" disabled title="Save current data to a buffer">
+                <i class="fas fa-save"></i><span>Save</span>
+            </button>
+            <button class="control-btn clear-btn" id="clear-btn" title="Clear all current data">
+                <i class="fas fa-trash"></i><span>Clear</span>
+            </button>
+            <button class="control-btn refresh-btn" id="control-reset-btn" title="Reset Layout">
+                <i class="fas fa-undo"></i><span>Reset</span>
+            </button>
+            <button class="control-btn" id="control-theme-btn" title="Toggle dark/light theme">
+                <i class="fas fa-moon"></i><span>Theme</span>
+            </button>
+            <button class="control-btn export-btn" id="control-view-btn" title="Switch between dashboard and categorized view">
+                <i class="fas fa-th-large"></i><span>Categories</span>
+            </button>
+            <button class="control-btn terminal-btn" id="terminal-toggle-btn" onclick="toggleTerminalPanel()" title="Toggle Terminal Panel">
+                <i class="fas fa-terminal"></i><span>Terminal</span>
+            </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Saved Buffers Panel -->
+                            <div class="buffer-list-panel">
+                                <div class="data-table-wrapper">
+                                    <div class="data-table-header">
+                                        <h6>Saved Buffers <span class="count-badge" id="buffers-count-badge">0</span></h6>
+                                        <div class="panel-content-data-header-controls">
+                                            <input type="text" id="buffer-search" placeholder="Search buffers..." class="buffer-search-input">
+                                            <button id="refresh-buffers-btn" class="small-btn" onclick="updateBuffersTable()" title="Refresh buffer list">
+                                                <i class="fas fa-sync-alt"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="table-container">
+                                        <table id="buffers-table">
+                                            <thead>
+                                                <tr>
+                                                    <th onclick="sortBuffers('name')" class="sortable">
+                                                        Name <i class="fas fa-sort"></i>
+                                                    </th>
+                                                    <th onclick="sortBuffers('recordCount')" class="sortable">
+                                                        Records <i class="fas fa-sort"></i>
+                                                    </th>
+                                                    <th onclick="sortBuffers('size')" class="sortable">
+                                                        Size <i class="fas fa-sort"></i>
+                                                    </th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="buffers-tbody">
+                                                <tr>
+                                                    <td colspan="4" class="table-empty-message">No buffers saved.</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Categories Panel -->
                 <div class="panel panel-grid-3-3-relative">
-                    <div class="panel-header">CATEGORIZED DATA</div>
+                    <div class="panel-header">
+                        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                            <span>CATEGORIZED DATA</span>
+                            <button id="terminal-toggle-btn" class="small-btn-terminal" onclick="toggleTerminalPanel()" title="Toggle Terminal">
+                                <i class="fas fa-terminal"></i>
+                            </button>
+                        </div>
+                    </div>
                     <div class="panel-content panel-content-grid panel-content-categories" id="categories-panel">
                         <!-- Category tiles will be populated here -->
+                    </div>
+                    
+                    <!-- Hidden Terminal Panel -->
+                    <div id="hidden-terminal-panel" class="hidden-terminal-panel" style="display: none;">
+                        <div class="terminal-container">
+                            <div class="terminal-header">
+                                <div class="terminal-controls">
+                                    <div class="terminal-control-dot green"></div>
+                                </div>
+                                <div class="logo">$</div>
+                                <span class="terminal-title">CSV Analyzer Terminal</span>
+                                <div class="terminal-header-controls">
+                                    <button onclick="clearTerminal()" class="small-btn-terminal-clear" title="Clear terminal">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                    <button onclick="toggleTerminalPanel()" class="small-btn-terminal-clear" title="Hide terminal">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="terminal-output" class="terminal-output">
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt">csv-analyzer:~$ </span>
+                                    <span class="terminal-text">Welcome to CSV Analyzer Terminal</span>
+                                </div>
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt">csv-analyzer:~$ </span>
+                                    <span class="terminal-text">Type 'help' for available commands</span>
+                                </div>
+                            </div>
+                            <div class="terminal-input-container">
+                                <div class="terminal-input-row">
+                                    <span class="terminal-prompt">csv-analyzer:~<span class="logo">$ </span></span>
+                                    <input type="text" id="terminal-input" class="terminal-input" placeholder="Enter command..." 
+                                           onkeydown="handleTerminalInput(event)">
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1160,19 +1403,20 @@ function renderDashboardView() {
     updateCategoriesTiles();
     updateChart();
     updateBuffersTable();
+    setupBufferSearch();
 
     // Render input panel
     renderInputPanel();
 
-    // Restore buffer selections
-    if (appState.selectedBuffer1) {
-        const buffer1Select = document.getElementById("buffer1-select");
-        if (buffer1Select) buffer1Select.value = appState.selectedBuffer1;
-    }
-    if (appState.selectedBuffer2) {
-        const buffer2Select = document.getElementById("buffer2-select");
-        if (buffer2Select) buffer2Select.value = appState.selectedBuffer2;
-    }
+    // Update navigation controls visibility
+    updateNavControlsVisibility();
+
+    // Update reset button states
+    updateResetButtonStates();
+
+    // Update clear button state
+    updateClearButtonState();
+
 }
 
 function renderCategorizedView() {
@@ -1194,12 +1438,12 @@ function renderCategorizedView() {
                                 <table>
                                     <thead>
                                         <tr>
-                                            <th onclick="sortCategoryTable('ib', 'timestamp')">Data UTC</th>
-                                            <th onclick="sortCategoryTable('ib', 'user')">User ID</th>
-                                            <th onclick="sortCategoryTable('ib', 'vrid')">VRID</th>
-                                            <th onclick="sortCategoryTable('ib', 'scac')">SCAC</th>
-                                            <th onclick="sortCategoryTable('ib', 'traktor')">Traktor</th>
-                                            <th onclick="sortCategoryTable('ib', 'trailer')">Trailer</th>
+                                            <th onclick="sortCategoryTable('ib', 'timestamp')" class="sortable">Data UTC <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ib', 'user')" class="sortable">User ID <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ib', 'vrid')" class="sortable">VRID <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ib', 'scac')" class="sortable">SCAC <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ib', 'traktor')" class="sortable">Traktor <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ib', 'trailer')" class="sortable">Trailer <i class="fas fa-sort"></i></th>
                                         </tr>
                                     </thead>
                                     <tbody id="ib-tbody">
@@ -1226,12 +1470,12 @@ function renderCategorizedView() {
                                 <table>
                                     <thead>
                                         <tr>
-                                            <th onclick="sortCategoryTable('ob', 'timestamp')">Data UTC</th>
-                                            <th onclick="sortCategoryTable('ob', 'user')">User ID</th>
-                                            <th onclick="sortCategoryTable('ob', 'vrid')">VRID</th>
-                                            <th onclick="sortCategoryTable('ob', 'scac')">SCAC</th>
-                                            <th onclick="sortCategoryTable('ob', 'traktor')">Traktor</th>
-                                            <th onclick="sortCategoryTable('ob', 'trailer')">Trailer</th>
+                                            <th onclick="sortCategoryTable('ob', 'timestamp')" class="sortable">Data UTC <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ob', 'user')" class="sortable">User ID <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ob', 'vrid')" class="sortable">VRID <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ob', 'scac')" class="sortable">SCAC <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ob', 'traktor')" class="sortable">Traktor <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('ob', 'trailer')" class="sortable">Trailer <i class="fas fa-sort"></i></th>
                                         </tr>
                                     </thead>
                                     <tbody id="ob-tbody">
@@ -1258,12 +1502,12 @@ function renderCategorizedView() {
                                 <table>
                                     <thead>
                                         <tr>
-                                            <th onclick="sortCategoryTable('atseu', 'timestamp')">Data UTC</th>
-                                            <th onclick="sortCategoryTable('atseu', 'user')">User ID</th>
-                                            <th onclick="sortCategoryTable('atseu', 'vrid')">VRID</th>
-                                            <th onclick="sortCategoryTable('atseu', 'scac')">SCAC</th>
-                                            <th onclick="sortCategoryTable('atseu', 'traktor')">Traktor</th>
-                                            <th onclick="sortCategoryTable('atseu', 'trailer')">Trailer</th>
+                                            <th onclick="sortCategoryTable('atseu', 'timestamp')" class="sortable">Data UTC <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('atseu', 'user')" class="sortable">User ID <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('atseu', 'vrid')" class="sortable">VRID <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('atseu', 'scac')" class="sortable">SCAC <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('atseu', 'traktor')" class="sortable">Traktor <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('atseu', 'trailer')" class="sortable">Trailer <i class="fas fa-sort"></i></th>
                                         </tr>
                                     </thead>
                                     <tbody id="atseu-tbody">
@@ -1290,12 +1534,12 @@ function renderCategorizedView() {
                                 <table>
                                     <thead>
                                         <tr>
-                                            <th onclick="sortCategoryTable('other', 'timestamp')">Data UTC</th>
-                                            <th onclick="sortCategoryTable('other', 'user')">User ID</th>
-                                            <th onclick="sortCategoryTable('other', 'vrid')">VRID</th>
-                                            <th onclick="sortCategoryTable('other', 'scac')">SCAC</th>
-                                            <th onclick="sortCategoryTable('other', 'traktor')">Traktor</th>
-                                            <th onclick="sortCategoryTable('other', 'trailer')">Trailer</th>
+                                            <th onclick="sortCategoryTable('other', 'timestamp')" class="sortable">Data UTC <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('other', 'user')" class="sortable">User ID <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('other', 'vrid')" class="sortable">VRID <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('other', 'scac')" class="sortable">SCAC <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('other', 'traktor')" class="sortable">Traktor <i class="fas fa-sort"></i></th>
+                                            <th onclick="sortCategoryTable('other', 'trailer')" class="sortable">Trailer <i class="fas fa-sort"></i></th>
                                         </tr>
                                     </thead>
                                     <tbody id="other-tbody">
@@ -1315,6 +1559,12 @@ function renderCategorizedView() {
     // Populate tables
     populateCategoryTables();
     setupResizers();
+
+    // Setup event listeners for nav controls
+    setupEventListeners();
+
+    // Update navigation controls visibility
+    updateNavControlsVisibility();
 }
 
 function populateCategoryTables() {
@@ -1381,6 +1631,8 @@ function toggleChart(type) {
 }
 
 function clearAll() {
+    const recordCount = appState.allData.length;
+
     appState.rawData = "";
     appState.allData = [];
     appState.categorizedData = { ib: [], ob: [], atseu: [], other: [] };
@@ -1391,13 +1643,21 @@ function clearAll() {
     updateCategoriesTiles();
     updateChart();
 
+    if (typeof sendInfoNotification === 'function') {
+        sendInfoNotification(`Data cleared: ${recordCount} records removed`);
+    }
+
     const saveBtn = document.getElementById("save-btn");
     if (saveBtn) saveBtn.disabled = true;
+
+    // Update clear button state after clearing
+    updateClearButtonState();
 
     showToast("All data cleared");
 }
 
 function toggleTheme() {
+    const oldTheme = appState.theme;
     appState.theme = appState.theme === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("theme", appState.theme);
     localStorage.setItem("theme", appState.theme);
@@ -1405,11 +1665,23 @@ function toggleTheme() {
     // Update CodeMirror theme
     updateCodeMirrorTheme();
 
+    if (typeof sendInfoNotification === 'function') {
+        sendInfoNotification(`Theme changed: ${oldTheme} → ${appState.theme}`);
+    }
+
     const themeBtn = document.getElementById("theme-btn");
-    themeBtn.innerHTML =
-        appState.theme === "dark"
-            ? '<i class="fas fa-sun"></i><br>Theme'
-            : '<i class="fas fa-moon"></i><br>Theme';
+    const controlThemeBtn = document.getElementById("control-theme-btn");
+
+    const navThemeContent = appState.theme === "dark"
+        ? '<i class="fas fa-sun"></i>'
+        : '<i class="fas fa-moon"></i>';
+
+    const controlThemeContent = appState.theme === "dark"
+        ? '<i class="fas fa-sun"></i><span>Theme</span>'
+        : '<i class="fas fa-moon"></i><span>Theme</span>';
+
+    if (themeBtn) themeBtn.innerHTML = navThemeContent;
+    if (controlThemeBtn) controlThemeBtn.innerHTML = controlThemeContent;
 }
 
 function toggleNavControls() {
@@ -1426,12 +1698,19 @@ function updateNavControlsVisibility() {
     const navControls = document.getElementById("nav-controls");
     const navShowBtn = document.getElementById("nav-show-btn");
 
-    if (appState.navControlsVisible) {
+    // Show nav-controls only in Categories view and when user wants them visible
+    if (appState.currentView === "categorized" && appState.navControlsVisible) {
+        navControls.style.display = "flex";
         navControls.classList.remove("hidden");
-        navShowBtn.style.display = "none";
-    } else {
+        if (navShowBtn) navShowBtn.style.display = "none";
+    } else if (appState.currentView === "categorized" && !appState.navControlsVisible) {
+        navControls.style.display = "flex";
         navControls.classList.add("hidden");
-        navShowBtn.style.display = "flex";
+        if (navShowBtn) navShowBtn.style.display = "flex";
+    } else {
+        // Hide in Dashboard view
+        navControls.style.display = "none";
+        if (navShowBtn) navShowBtn.style.display = "none";
     }
 }
 
@@ -1457,13 +1736,23 @@ function loadBuffer(id) {
         }
         handleDataParsed(csvData);
         showToast(`Loaded ${buffer.name}`, "info");
+        if (typeof sendInfoNotification === 'function') {
+            sendInfoNotification(`Buffer loaded: ${buffer.name} (${buffer.recordCount} records)`);
+        }
     }
 }
 
 function removeBuffer(id) {
+    const buffers = getBuffers();
+    const buffer = buffers.find((b) => b.id === id);
+    const bufferName = buffer ? buffer.name : 'Unknown';
+
     if (deleteBuffer(id)) {
         updateBuffersTable();
         showToast("Buffer deleted", "info");
+        if (typeof sendInfoNotification === 'function') {
+            sendInfoNotification(`Buffer deleted: ${bufferName}`);
+        }
     }
 }
 
@@ -1512,6 +1801,8 @@ function showModal(title, data) {
                     ? "trailer-vs"
                     : ""
                 }">${(row.trailer || "").toUpperCase()}</td>
+                     <td class="data-driver-name driver-column">${(row.driverName || "").toUpperCase()}</td>
+                     <td class="data-driver-license driver-column">${(row.driverLicense || "").toUpperCase()}</td>
                  </tr>
              `
         )
@@ -1535,7 +1826,13 @@ async function copyModalDataToClipboard() {
     if (appState.currentModalData && appState.currentModalData.data) {
         try {
             // Create CSV content
-            const headers = ["timestamp", "user", "vrid", "scac", "traktor", "trailer"];
+            let headers = ["timestamp", "user", "vrid", "scac", "traktor", "trailer"];
+
+            // Add driver columns only if enabled
+            if (appState.driversEnabled) {
+                headers.push("driverName", "driverLicense");
+            }
+
             const csvContent = [
                 headers.join(","),
                 ...appState.currentModalData.data.map(row =>
@@ -1641,6 +1938,18 @@ function closeModal() {
 
 // CSV Autocomplete hints
 function defineCSVHints() {
+    // Get dynamic driver data from localStorage
+    const getDriversFromStorage = () => {
+        try {
+            const drivers = JSON.parse(localStorage.getItem('csv_drivers') || '[]');
+            return drivers;
+        } catch (e) {
+            return [];
+        }
+    };
+
+    const drivers = getDriversFromStorage();
+
     const csvHints = {
         // Common SCAC codes
         scacCodes: ['UACU', 'MSKU', 'OOLU', 'HLCU', 'COSCO', 'EVERGREEN', 'MAEU', 'HAPAG'],
@@ -1651,7 +1960,11 @@ function defineCSVHints() {
         // Common user IDs
         userIds: ['USER001', 'USER002', 'USER003', 'ADMIN', 'OPERATOR', 'DRIVER'],
         // VRID patterns
-        vridPatterns: ['0994001', '0994002', '0994003', 'OTH001', 'OTH002', 'OTH003']
+        vridPatterns: ['0994001', '0994002', '0994003', 'OTH001', 'OTH002', 'OTH003'],
+        // Driver names - dynamically loaded from localStorage
+        driverNames: drivers.map(d => d.name),
+        // Driver licenses - dynamically loaded from localStorage
+        driverLicenses: drivers.map(d => d.license)
     };
 
     CodeMirror.registerHelper("hint", "csv-hint", function (editor, options) {
@@ -1686,6 +1999,20 @@ function defineCSVHints() {
                 break;
             case 5: // Trailer column
                 hints = csvHints.trailerTypes.filter(hint => hint.toLowerCase().includes(word.toLowerCase()));
+                break;
+            case 6: // Driver Name column (only if drivers enabled)
+                if (appState.driversEnabled) {
+                    hints = csvHints.driverNames.filter(hint => hint.toLowerCase().includes(word.toLowerCase()));
+                } else {
+                    hints = CodeMirror.hint.anyword(editor, options)?.list || [];
+                }
+                break;
+            case 7: // Driver License column (only if drivers enabled)
+                if (appState.driversEnabled) {
+                    hints = csvHints.driverLicenses.filter(hint => hint.toLowerCase().includes(word.toLowerCase()));
+                } else {
+                    hints = CodeMirror.hint.anyword(editor, options)?.list || [];
+                }
                 break;
             default:
                 // General word hints from document
@@ -1866,6 +2193,9 @@ function initializeCodeMirrorEditor() {
             const content = cm.getValue();
             handleDataParsed(content);
             appState.rawData = content;
+
+            // Update clear button state when content changes
+            updateClearButtonState();
         });
 
         // Restore content if available
@@ -1881,6 +2211,9 @@ function initializeCodeMirrorEditor() {
                 appState.csvEditor.refresh();
                 console.log("CodeMirror refreshed");
             }
+
+            // Update clear button state after initialization
+            updateClearButtonState();
         }, 50);
     }
 }
@@ -1913,62 +2246,182 @@ function destroyCodeMirrorEditor(saveData = true) {
 
 // Initialize the application
 function init() {
-    // Define custom CSV mode and hints for CodeMirror
-    defineCustomCSVMode();
-    defineCSVHints();
-
-    // Set theme
-    document.documentElement.setAttribute("theme", appState.theme);
-    const themeBtn = document.getElementById("theme-btn");
-    themeBtn.innerHTML =
-        appState.theme === "dark"
-            ? '<i class="fas fa-sun"></i><br>Theme'
-            : '<i class="fas fa-moon"></i><br>Theme';
-
-    // Button handlers
-    document.getElementById("save-btn").addEventListener("click", saveToBuffer);
-    document.getElementById("clear-btn").addEventListener("click", clearAll);
-    document.getElementById("theme-btn").addEventListener("click", toggleTheme);
-    document.getElementById("view-btn").addEventListener("click", toggleView);
-    document.getElementById("nav-hide-btn").addEventListener("click", toggleNavControls);
-    document.getElementById("nav-show-btn").addEventListener("click", toggleNavControls);
-    document.getElementById("reset-btn").addEventListener("click", function () {
-        const grid = document.getElementById("grid-container");
-        grid.style.gridTemplateColumns = "1fr 8px 1fr";
-        grid.style.gridTemplateRows = "1fr 8px 1fr";
-        showToast("Layout reset to default", "info");
-    });
-
-    // Modal click outside to close
-    document.getElementById("modal").addEventListener("click", function (e) {
-        if (e.target === this) {
-            closeModal();
+    try {
+        // Check if required libraries are loaded
+        if (typeof CodeMirror === 'undefined') {
+            console.error('CodeMirror is not loaded');
+            return;
         }
-    });
 
-    // Close modal on Escape key
-    document.addEventListener("keydown", function (e) {
-        if (e.key === "Escape") {
-            const modal = document.getElementById("modal");
-            if (modal.classList.contains("show")) {
-                closeModal();
+        // Check React and related libraries
+        if (typeof React !== 'undefined' && typeof PropTypes === 'undefined') {
+            console.warn('PropTypes is not loaded - this may cause React warnings');
+        }
+
+        // Define custom CSV mode and hints for CodeMirror
+        defineCustomCSVMode();
+        defineCSVHints();
+
+        // Set theme
+        document.documentElement.setAttribute("theme", appState.theme);
+        const themeBtn = document.getElementById("theme-btn");
+        const controlThemeBtn = document.getElementById("control-theme-btn");
+
+        const navThemeContent = appState.theme === "dark"
+            ? '<i class="fas fa-sun"></i>'
+            : '<i class="fas fa-moon"></i>';
+
+        const controlThemeContent = appState.theme === "dark"
+            ? '<i class="fas fa-sun"></i><span>Theme</span>'
+            : '<i class="fas fa-moon"></i><span>Theme</span>';
+
+        if (themeBtn) themeBtn.innerHTML = navThemeContent;
+        if (controlThemeBtn) controlThemeBtn.innerHTML = controlThemeContent;
+
+        // Navigation control handlers (these are in the fixed nav bar, not in dynamic content)
+        const navResetBtn = document.getElementById("reset-btn");
+        if (navResetBtn) {
+            navResetBtn.addEventListener("click", function () {
+                // Add spin animation
+                navResetBtn.classList.add("spin");
+
+                // Reset layout
+                const grid = document.getElementById("grid-container");
+                grid.style.gridTemplateColumns = "1fr 8px 1fr";
+                grid.style.gridTemplateRows = "1fr 8px 1fr";
+
+                // Update reset button states after reset
+                updateResetButtonStates();
+
+                showToast("Layout reset to default", "info");
+
+                // Remove animation class after animation completes
+                setTimeout(() => {
+                    navResetBtn.classList.remove("spin");
+                }, 800);
+            });
+        }
+
+        const navThemeBtn = document.getElementById("theme-btn");
+        if (navThemeBtn) {
+            navThemeBtn.addEventListener("click", toggleTheme);
+        }
+
+        const navShowBtn = document.getElementById("nav-show-btn");
+        if (navShowBtn) {
+            navShowBtn.addEventListener("click", toggleNavControls);
+        }
+
+        // Modal click outside to close
+        const modal = document.getElementById("modal");
+        if (modal) {
+            modal.addEventListener("click", function (e) {
+                if (e.target === this) {
+                    closeModal();
+                }
+            });
+        }
+
+        // Close modal on Escape key
+        document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") {
+                const modal = document.getElementById("modal");
+                if (modal.classList.contains("show")) {
+                    closeModal();
+                }
+            }
+        });
+
+        // Setup event listeners
+        setupEventListeners();
+
+        // Initialize UI and render current view
+        renderCurrentView();
+
+        // Initialize navigation controls visibility
+        updateNavControlsVisibility();
+
+        // Initialize driver columns state
+        toggleDriverColumns(appState.driversEnabled);
+
+        // Initialize CodeMirror editor if not already initialized
+        setTimeout(() => {
+            initializeCodeMirrorEditor();
+            // Initialize reset button states (disabled by default)
+            updateResetButtonStates();
+        }, 100);
+
+    } catch (error) {
+        console.error('Error initializing application:', error);
+        // Show user-friendly error message
+        const errorDiv = document.createElement('div');
+        errorDiv.style.cssText = 'position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #ff4444; color: white; padding: 10px; border-radius: 5px; z-index: 9999;';
+        errorDiv.textContent = 'Application initialization failed. Please refresh the page.';
+        document.body.appendChild(errorDiv);
+        setTimeout(() => errorDiv.remove(), 5000);
+    }
+}
+
+// Layout state tracking
+let layoutState = {
+    isDefault: true,
+    defaultColumns: "1fr 8px 1fr",
+    defaultRows: "1fr 8px 1fr"
+};
+
+// Function to check if layout is at default state
+function isLayoutDefault() {
+    const grid = document.getElementById("grid-container");
+    if (!grid) return true;
+
+    const currentCols = grid.style.gridTemplateColumns || layoutState.defaultColumns;
+    const currentRows = grid.style.gridTemplateRows || layoutState.defaultRows;
+
+    return currentCols === layoutState.defaultColumns &&
+        currentRows === layoutState.defaultRows;
+}
+
+// Function to update reset button states
+function updateResetButtonStates() {
+    const isDefault = isLayoutDefault();
+    layoutState.isDefault = isDefault;
+
+    // Update both nav-controls reset button and control panel reset button
+    const navResetBtn = document.getElementById('reset-btn');
+    const controlResetBtn = document.getElementById('control-reset-btn');
+
+    [navResetBtn, controlResetBtn].forEach(btn => {
+        if (btn) {
+            if (isDefault) {
+                btn.disabled = true;
+                btn.classList.add('disabled');
+            } else {
+                btn.disabled = false;
+                btn.classList.remove('disabled');
             }
         }
     });
+}
 
-    // Setup event listeners
-    setupEventListeners();
+// Function to update clear button state
+function updateClearButtonState() {
+    const clearBtn = document.getElementById('clear-btn');
+    if (!clearBtn) return;
 
-    // Initialize UI and render current view
-    renderCurrentView();
+    // Check if editor has content or if there's data in appState
+    const hasEditorContent = appState.csvEditor && appState.csvEditor.getValue().trim().length > 0;
+    const hasData = appState.rawData && appState.rawData.trim().length > 0;
+    const hasAllData = appState.allData && appState.allData.length > 0;
 
-    // Initialize navigation controls visibility
-    updateNavControlsVisibility();
+    const hasAnyContent = hasEditorContent || hasData || hasAllData;
 
-    // Initialize CodeMirror editor if not already initialized
-    setTimeout(() => {
-        initializeCodeMirrorEditor();
-    }, 100);
+    if (hasAnyContent) {
+        clearBtn.disabled = false;
+        clearBtn.classList.remove('disabled');
+    } else {
+        clearBtn.disabled = true;
+        clearBtn.classList.add('disabled');
+    }
 }
 
 // Resizer setup
@@ -2028,9 +2481,12 @@ function handleResizerMouseDown(e, direction) {
         const deltaX = moveEvent.clientX - startX;
         const deltaY = moveEvent.clientY - startY;
 
+        // Speed multiplier for faster resizing - increase this value for faster movement
+        const speedMultiplier = 2.5;
+
         if (direction === "vertical" || direction === "both") {
             const containerWidth = gridContainer.offsetWidth;
-            const deltaRatio = deltaX / containerWidth;
+            const deltaRatio = (deltaX / containerWidth) * speedMultiplier;
 
             let newCol1 = Math.max(0.2, startCol1 + deltaRatio);
             let newCol2 = Math.max(0.2, startCol2 - deltaRatio);
@@ -2040,13 +2496,16 @@ function handleResizerMouseDown(e, direction) {
 
         if (direction === "horizontal" || direction === "both") {
             const containerHeight = gridContainer.offsetHeight;
-            const deltaRatio = deltaY / containerHeight;
+            const deltaRatio = (deltaY / containerHeight) * speedMultiplier;
 
             let newRow1 = Math.max(0.2, startRow1 + deltaRatio);
             let newRow2 = Math.max(0.2, startRow2 - deltaRatio);
 
             gridContainer.style.gridTemplateRows = `${newRow1}fr 8px ${newRow2}fr`;
         }
+
+        // Update reset button states after layout change
+        updateResetButtonStates();
     }
 
     function handleMouseUp() {
@@ -2242,5 +2701,166 @@ function updateSortIndicators(tableType, column, direction) {
     }
 }
 
+// Buffer management functions
+function updateBufferStats() {
+    const buffers = getBuffers();
+    const totalBuffersElement = document.getElementById("total-buffers-count");
+    const totalRecordsElement = document.getElementById("total-records-count");
+    const storageUsedElement = document.getElementById("storage-used");
+
+    if (totalBuffersElement) {
+        totalBuffersElement.textContent = buffers.length;
+    }
+
+    if (totalRecordsElement) {
+        const totalRecords = buffers.reduce((sum, buffer) => sum + (buffer.recordCount || 0), 0);
+        totalRecordsElement.textContent = totalRecords.toLocaleString();
+    }
+
+    if (storageUsedElement) {
+        const totalSize = buffers.reduce((sum, buffer) => sum + (buffer.size || 0), 0);
+        const sizeInKB = Math.round(totalSize / 1024);
+        storageUsedElement.textContent = `${sizeInKB.toLocaleString()} KB`;
+    }
+
+    // Update header badge
+    const buffersBadge = document.getElementById("buffers-count-badge");
+    if (buffersBadge) {
+        buffersBadge.textContent = buffers.length;
+    }
+}
+
+function clearAllBuffersConfirm() {
+    const buffers = getBuffers();
+    if (buffers.length === 0) {
+        showToast("No buffers to clear", "info");
+        if (typeof sendInfoNotification === 'function') {
+            sendInfoNotification("No buffers to clear");
+        }
+        return;
+    }
+
+    if (confirm(`Are you sure you want to delete all ${buffers.length} buffers? This action cannot be undone.`)) {
+        clearAllBuffers();
+        updateBuffersTable();
+        showToast(`Cleared ${buffers.length} buffers`, "success");
+        if (typeof sendSuccessNotification === 'function') {
+            sendSuccessNotification(`All buffers cleared (${buffers.length} buffers deleted)`);
+        }
+    }
+}
+
+function exportAllBuffers() {
+    const buffers = getBuffers();
+    if (buffers.length === 0) {
+        showToast("No buffers to export", "info");
+        if (typeof sendWarningNotification === 'function') {
+            sendWarningNotification("No buffers available for export");
+        }
+        return;
+    }
+
+    try {
+        // Create a combined CSV with all buffers
+        let headers = "Buffer_Name,Timestamp,User,VRID,SCAC,Traktor,Trailer";
+        if (appState.driversEnabled) {
+            headers += ",Driver_Name,Driver_License";
+        }
+        let combinedCSV = headers + "\n";
+
+        buffers.forEach(buffer => {
+            if (buffer.originalData && buffer.originalData.length > 0) {
+                buffer.originalData.forEach(row => {
+                    let rowData = `"${buffer.name}",${row.timestamp || ''},${row.user || ''},${row.vrid || ''},${row.scac || ''},${row.traktor || ''},${row.trailer || ''}`;
+                    if (appState.driversEnabled) {
+                        rowData += `,${row.driverName || ''},${row.driverLicense || ''}`;
+                    }
+                    combinedCSV += rowData + "\n";
+                });
+            }
+        });
+
+        const blob = new Blob([combinedCSV], { type: "text/csv;charset=utf-8;" });
+        const link = document.createElement("a");
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `all_buffers_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        showToast(`Exported ${buffers.length} buffers to CSV`, "success");
+        if (typeof sendSuccessNotification === 'function') {
+            sendSuccessNotification(`All buffers exported: ${buffers.length} buffers combined into single CSV`);
+        }
+    } catch (error) {
+        showToast("Error exporting buffers", "error");
+        if (typeof sendErrorNotification === 'function') {
+            sendErrorNotification(`Failed to export buffers: ${error.message}`);
+        }
+    }
+}
+
+function setupBufferSearch() {
+    const searchInput = document.getElementById("buffer-search");
+    if (searchInput) {
+        searchInput.addEventListener("input", function (e) {
+            const searchTerm = e.target.value.toLowerCase();
+            const tableRows = document.querySelectorAll("#buffers-table tbody tr");
+
+            tableRows.forEach(row => {
+                if (row.cells.length > 1) { // Skip empty message row
+                    const name = row.cells[0].textContent.toLowerCase();
+                    const records = row.cells[1].textContent.toLowerCase();
+                    const size = row.cells[2].textContent.toLowerCase();
+
+                    const matches = name.includes(searchTerm) ||
+                        records.includes(searchTerm) ||
+                        size.includes(searchTerm);
+
+                    row.style.display = matches ? "" : "none";
+                }
+            });
+        });
+    }
+}
+
+// Terminal functionality moved to terminal.js
+
 // Start the application
+function toggleTerminalPanel() {
+    const terminalPanel = document.getElementById("hidden-terminal-panel");
+    const categoriesPanel = document.getElementById("categories-panel");
+    const toggleBtn = document.getElementById("terminal-toggle-btn");
+
+    if (terminalPanel && categoriesPanel && toggleBtn) {
+        if (terminalPanel.style.display === "none" || !terminalPanel.style.display) {
+            // Show terminal - covers full panel
+            terminalPanel.style.display = "block";
+            categoriesPanel.style.visibility = "hidden";
+            toggleBtn.innerHTML = '<i class="fas fa-times" style="color: rgb(var(--rgb-red));"></i><span>Hide</span>';
+            toggleBtn.title = "Hide Terminal";
+
+            // Send notification
+            if (typeof sendInfoNotification === 'function') {
+                sendInfoNotification("Terminal panel opened - full screen");
+            }
+        } else {
+            // Hide terminal - show categories
+            terminalPanel.style.display = "none";
+            categoriesPanel.style.visibility = "visible";
+            toggleBtn.innerHTML = '<i class="fas fa-terminal"></i><span>Terminal</span>';
+            toggleBtn.title = "Show Terminal";
+
+            // Send notification
+            if (typeof sendInfoNotification === 'function') {
+                sendInfoNotification("Terminal panel closed");
+            }
+        }
+    }
+}
+
 document.addEventListener("DOMContentLoaded", init);
